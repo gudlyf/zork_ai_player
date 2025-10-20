@@ -11,6 +11,15 @@ import select
 from anthropic import Anthropic
 
 class ZorkPlayer:
+    # ANSI color codes
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    MAGENTA = '\033[95m'
+    BOLD = '\033[1m'
+    RESET = '\033[0m'
+    
     def __init__(self, game_file, api_key=None, max_turns=50):
         self.game_file = game_file
         self.max_turns = max_turns
@@ -179,9 +188,9 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             print("Trying to continue anyway...\n")
         
         print("=" * 70)
-        print("INITIAL GAME OUTPUT:")
+        print(f"{self.MAGENTA}{self.BOLD}INITIAL GAME OUTPUT:{self.RESET}")
         print("=" * 70)
-        print(initial_output)
+        print(f"{self.YELLOW}{initial_output}{self.RESET}")
         print("=" * 70)
         
         game_output = initial_output
@@ -189,12 +198,12 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         # Game loop
         for turn in range(1, self.max_turns + 1):
             print(f"\n{'=' * 70}")
-            print(f"TURN {turn}")
+            print(f"{self.GREEN}{self.BOLD}▶ TURN {turn}{self.RESET}")
             print(f"{'=' * 70}")
             
             # Get command from AI
             command = self.get_ai_command(game_output)
-            print(f"AI Command: {command}")
+            print(f"\n{self.CYAN}{self.BOLD}🤖 AI Command:{self.RESET} {self.CYAN}{command}{self.RESET}")
             
             # Check for quit
             if command.upper() in ['QUIT', 'Q']:
@@ -203,7 +212,8 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             
             # Send command to game
             game_output = self.send_command(command)
-            print(f"\nGame Response:\n{game_output}")
+            print(f"\n{self.YELLOW}{self.BOLD}📜 Game Response:{self.RESET}")
+            print(f"{self.YELLOW}{game_output}{self.RESET}")
             
             # Check if game ended
             if "quit" in game_output.lower() or not game_output.strip():
@@ -219,7 +229,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             self.game_process.wait()
         
         print(f"\n{'=' * 70}")
-        print("GAME SESSION COMPLETE")
+        print(f"{self.GREEN}{self.BOLD}✓ GAME SESSION COMPLETE{self.RESET}")
         print(f"{'=' * 70}")
 
 def main():
