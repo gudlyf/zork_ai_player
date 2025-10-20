@@ -129,21 +129,34 @@ python zork_ai_player.py games/zork1.z5 --save-file my_custom_save.sav
 
 The AI will:
 1. Read the game's text output
-2. Analyze the situation
+2. Analyze the situation using previous knowledge
 3. Decide on the best command
 4. Execute the command
-5. Repeat until the game ends or max turns reached
+5. Learn from the interaction
+6. Repeat until the game ends or max turns reached
+
+**Learning System in Action:**
+```
+📚 Loaded previous learning: 15 facts, 8 locations, 12 items
+▶ TURN 1
+🤖 AI Command: EXAMINE LAMP
+📜 Game Response: The lamp is on and provides light...
+```
+
+The AI remembers what it learned in previous sessions and uses this knowledge to make better decisions.
 
 ## How It Works
 
 1. **Frotz Interface**: Uses `dfrotz` (dumb frotz) to run the Z-machine game file via subprocess
 2. **Claude Integration**: Sends game text to Claude along with instructions about Zork
 3. **Command Loop**: AI generates commands, sends them to Frotz, and reads responses
-4. **System Prompt**: Includes detailed instructions about:
+4. **Learning System**: AI learns from its experiences and builds knowledge across sessions
+5. **System Prompt**: Includes detailed instructions about:
    - How Zork works
    - Valid command syntax
    - Game objectives
    - Strategy tips
+   - Special game mechanics (like "passes through" objects)
 
 **Output Formatting:**
 - 🤖 **AI Commands** - Displayed in **cyan** 
@@ -184,6 +197,52 @@ python zork_ai_player.py games/zork1.z5 --no-autosave
 **How It Works:**
 The application uses Zork's built-in SAVE and RESTORE commands. Save files are created in Quetzal format (.qzl) by Frotz and are compatible with any Z-machine interpreter (you could load them in a regular Frotz session).
 
+## AI Learning System 🧠
+
+The AI player includes an intelligent learning system that captures knowledge across game sessions:
+
+**What the AI Learns:**
+- **Location Insights**: Details about rooms, passages, traps, and treasures
+- **Item Information**: What items do, where they're found, how to use them
+- **Puzzle Solutions**: Hints about locked doors, switches, and other obstacles
+- **General Facts**: What works, what doesn't, and successful strategies
+
+**Learning Features:**
+- **Persistent Memory**: AI remembers discoveries from previous sessions
+- **Smart Context**: Only relevant knowledge is provided to keep token usage low
+- **Automatic Extraction**: Learning happens automatically during gameplay
+- **Efficient Storage**: Knowledge saved as lightweight JSON files
+
+**Learning Files:**
+- `games/saves/zork1_learning.json` - Contains AI's accumulated knowledge
+- Automatically saved every 10 turns and when exiting
+- Loaded automatically when resuming a game
+
+**Example Learning Data:**
+```json
+{
+  "learned_facts": [
+    "Cannot open door - It's locked",
+    "Successfully took lamp with TAKE LAMP"
+  ],
+  "location_insights": {
+    "Living Room": ["There is a lamp here", "Passage to north"]
+  },
+  "item_insights": {
+    "lamp": "A brass lamp that provides light"
+  },
+  "puzzle_solutions": {
+    "door_puzzle": "Need to find key"
+  }
+}
+```
+
+**Benefits:**
+- AI makes better decisions based on previous experience
+- Avoids repeating failed strategies
+- Remembers successful approaches
+- Builds knowledge progressively across sessions
+
 ## Project Structure
 
 ```
@@ -194,7 +253,8 @@ The application uses Zork's built-in SAVE and RESTORE commands. Save files are c
 └── games/
     ├── zork1.z5         # Zork game file (you provide this)
     └── saves/           # Auto-generated save files
-        └── zork1_autosave.qzl  # Quetzal save format
+        ├── zork1_autosave.qzl      # Quetzal save format
+        └── zork1_learning.json     # AI learning data
 ```
 
 ## Customization
@@ -270,8 +330,10 @@ Zork is copyright Activision/Infocom. The game files are distributed freely by A
 - The AI may not always make optimal decisions
 - Some puzzles in Zork are quite difficult even for AI
 - You can interrupt the program with Ctrl+C (will auto-save if enabled)
-- The conversation history grows with each turn, affecting API costs
+- The learning system keeps token usage low by only storing key insights
 - Use `--verbose` flag to see detailed debug information
 - Colors are supported on most modern terminals (macOS Terminal, iTerm2, Linux terminals)
 - Save files are stored in `games/saves/` in Quetzal format (.qzl) and are compatible with any Frotz interpreter
-- When resuming, the AI continues from the saved game state with full context
+- Learning data is stored in JSON format and persists across sessions
+- When resuming, the AI continues from the saved game state with full context and previous knowledge
+- The AI learns from "passes through" mechanics and other special game features

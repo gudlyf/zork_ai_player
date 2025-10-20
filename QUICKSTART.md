@@ -131,6 +131,33 @@ You are facing the north side of a white house...
 **Note:** AI Commands appear in cyan, Game Responses in yellow. 
 Add `--verbose` to see grey debug messages about timeouts and I/O.
 
+## AI Learning System 🧠
+
+The AI player includes an intelligent learning system that captures knowledge across game sessions:
+
+**What the AI Learns:**
+- **Location Insights**: Details about rooms, passages, traps, and treasures
+- **Item Information**: What items do, where they're found, how to use them
+- **Puzzle Solutions**: Hints about locked doors, switches, and other obstacles
+- **General Facts**: What works, what doesn't, and successful strategies
+
+**Learning Features:**
+- **Persistent Memory**: AI remembers discoveries from previous sessions
+- **Smart Context**: Only relevant knowledge is provided to keep token usage low
+- **Automatic Extraction**: Learning happens automatically during gameplay
+- **Efficient Storage**: Knowledge saved as lightweight JSON files
+
+**Learning Files:**
+- `games/saves/zork1_learning.json` - Contains AI's accumulated knowledge
+- Automatically saved every 10 turns and when exiting
+- Loaded automatically when resuming a game
+
+**Benefits:**
+- AI makes better decisions based on previous experience
+- Avoids repeating failed strategies
+- Remembers successful approaches
+- Builds knowledge progressively across sessions
+
 ## Save & Resume
 
 The game auto-saves every 10 turns in Quetzal format (.qzl). When you run it again:
@@ -141,6 +168,11 @@ Resume from save? (y/n): y
 ```
 
 Type `y` to continue, `n` to start over.
+
+**Learning System Integration:**
+- AI learning data is automatically saved alongside game saves
+- When resuming, the AI loads both game state and previous knowledge
+- The AI makes better decisions based on what it learned before
 
 **Run without saving:**
 ```bash

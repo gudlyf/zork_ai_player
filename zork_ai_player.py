@@ -36,6 +36,13 @@ class ZorkPlayer:
         self.game_process = None
         self.turn_count = 0
         
+        # Learning system - lightweight knowledge capture
+        self.learned_facts = []
+        self.location_insights = {}  # location -> insights
+        self.item_insights = {}      # item -> insights
+        self.puzzle_solutions = {}   # puzzle -> solution
+        self.learning_file = None
+        
         # Set up save file path
         if not self.save_file:
             game_name = os.path.splitext(os.path.basename(game_file))[0]
@@ -43,6 +50,9 @@ class ZorkPlayer:
             os.makedirs(save_dir, exist_ok=True)
             # Frotz uses .qzl extension for Quetzal save format
             self.save_file = os.path.join(save_dir, f'{game_name}_autosave.qzl')
+        
+        # Set up learning file path
+        self.learning_file = os.path.join(save_dir, f'{game_name}_learning.json')
         
     def _debug(self, message):
         """Print debug message if verbose mode is enabled"""
@@ -80,6 +90,12 @@ STRATEGY:
 - NEVER quit the game - always try different approaches when stuck
 - If you can't progress in one direction, try exploring other areas
 - Use INVENTORY to see what you have and think of creative uses for items
+
+SPECIAL MECHANICS:
+- If the game says your hand "passes through" an object, it means the object is not solid/real
+- This usually indicates the object is an illusion, ghost, or magical effect
+- Try different approaches: examine it more carefully, try magic words, or look for hidden switches
+- Some objects that "pass through" might be keys to puzzles or indicate you're in a special area
 
 Play strategically and try to make meaningful progress. Output ONLY the next command you want to execute, nothing else. No explanations, just the command."""
 
@@ -206,6 +222,14 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         """Get next command from Claude"""
         self._debug("Requesting command from Claude...")
         
+        # Get learning context
+        learning_context = self.get_learning_context()
+        
+        # Create enhanced prompt with learning
+        enhanced_prompt = self.system_prompt
+        if learning_context:
+            enhanced_prompt += f"\n\nPREVIOUS KNOWLEDGE:\n{learning_context}\n\nUse this knowledge to make better decisions."
+        
         # Add game output to conversation
         self.conversation_history.append({
             "role": "user",
@@ -216,7 +240,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         response = self.client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=150,
-            system=self.system_prompt,
+            system=enhanced_prompt,
             messages=self.conversation_history
         )
         
@@ -229,6 +253,182 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         })
         
         return command
+    
+    def extract_learning(self, game_output, command, response):
+        """Extract key learning from game interaction"""
+        # Look for important patterns in the game output
+        important_patterns = [
+            "You can't", "You need", "It's locked", "The door is", "You see",
+            "There is", "You find", "You take", "You drop", "You open",
+            "You close", "You read", "You examine", "You attack", "You die"
+        ]
+        
+        # Extract location information
+        if "You are in" in game_output or "You are at" in game_output:
+            location = self._extract_location(game_output)
+            if location:
+                self.location_insights[location] = self._summarize_location(game_output)
+        
+        # Extract item information
+        if any(pattern in game_output for pattern in ["You take", "You find", "You see"]):
+            items = self._extract_items(game_output)
+            for item in items:
+                self.item_insights[item] = self._summarize_item(game_output, item)
+        
+        # Extract puzzle solutions
+        if "You can't" in response and "You need" in game_output:
+            puzzle = self._identify_puzzle(game_output)
+            if puzzle:
+                self.puzzle_solutions[puzzle] = self._extract_solution_hint(game_output)
+        
+        # Extract general facts
+        if any(pattern in game_output for pattern in important_patterns):
+            fact = self._extract_fact(game_output, command, response)
+            if fact:
+                self.learned_facts.append(fact)
+    
+    def _extract_location(self, game_output):
+        """Extract current location from game output"""
+        lines = game_output.split('\n')
+        for line in lines:
+            if "You are in" in line or "You are at" in line:
+                # Extract location name (usually the first line after "You are in/at")
+                return line.strip()
+        return None
+    
+    def _summarize_location(self, game_output):
+        """Create a brief summary of location insights"""
+        # Extract key details about the location
+        key_details = []
+        lines = game_output.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if any(keyword in line.lower() for keyword in ['door', 'passage', 'stair', 'ladder', 'trap', 'treasure', 'monster']):
+                key_details.append(line)
+        
+        return key_details[:3]  # Keep only top 3 insights
+    
+    def _extract_items(self, game_output):
+        """Extract items mentioned in the game output"""
+        items = []
+        lines = game_output.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if any(keyword in line.lower() for keyword in ['you take', 'you find', 'you see']):
+                # Extract item names (simple heuristic)
+                words = line.split()
+                for i, word in enumerate(words):
+                    if word.lower() in ['take', 'find', 'see'] and i + 1 < len(words):
+                        items.append(words[i + 1])
+        
+        return items
+    
+    def _summarize_item(self, game_output, item):
+        """Create a brief summary of item insights"""
+        # Look for descriptions of the item
+        lines = game_output.split('\n')
+        for line in lines:
+            if item.lower() in line.lower() and len(line) > 10:
+                return line.strip()
+        return f"Found {item}"
+    
+    def _identify_puzzle(self, game_output):
+        """Identify if there's a puzzle to solve"""
+        if "You can't" in game_output and any(keyword in game_output.lower() for keyword in ['door', 'gate', 'passage', 'open']):
+            return "door_puzzle"
+        return None
+    
+    def _extract_solution_hint(self, game_output):
+        """Extract hints about puzzle solutions"""
+        lines = game_output.split('\n')
+        for line in lines:
+            if any(keyword in line.lower() for keyword in ['key', 'lever', 'button', 'switch', 'password']):
+                return line.strip()
+        return "Need to find solution"
+    
+    def _extract_fact(self, game_output, command, response):
+        """Extract a general fact from the interaction"""
+        # Create a concise fact about what happened
+        if "You can't" in response:
+            return f"Cannot {command.lower()} - {response[:50]}"
+        elif "You take" in response:
+            return f"Successfully took item with {command}"
+        elif "You open" in response:
+            return f"Successfully opened with {command}"
+        return None
+    
+    def save_learning(self):
+        """Save learning data to file"""
+        import json
+        
+        learning_data = {
+            'learned_facts': self.learned_facts[-20:],  # Keep only last 20 facts
+            'location_insights': self.location_insights,
+            'item_insights': self.item_insights,
+            'puzzle_solutions': self.puzzle_solutions,
+            'turn_count': self.turn_count
+        }
+        
+        try:
+            with open(self.learning_file, 'w') as f:
+                json.dump(learning_data, f, indent=2)
+            self._debug(f"Learning saved to: {self.learning_file}")
+        except Exception as e:
+            self._debug(f"Error saving learning: {e}")
+    
+    def load_learning(self):
+        """Load learning data from file"""
+        import json
+        
+        if not os.path.exists(self.learning_file):
+            return False
+        
+        try:
+            with open(self.learning_file, 'r') as f:
+                learning_data = json.load(f)
+            
+            self.learned_facts = learning_data.get('learned_facts', [])
+            self.location_insights = learning_data.get('location_insights', {})
+            self.item_insights = learning_data.get('item_insights', {})
+            self.puzzle_solutions = learning_data.get('puzzle_solutions', {})
+            
+            self._debug(f"Learning loaded from: {self.learning_file}")
+            return True
+        except Exception as e:
+            self._debug(f"Error loading learning: {e}")
+            return False
+    
+    def get_learning_context(self):
+        """Get relevant learning context for AI without full conversation history"""
+        context = []
+        
+        # Add recent facts (last 5)
+        if self.learned_facts:
+            context.append("Recent discoveries:")
+            for fact in self.learned_facts[-5:]:
+                context.append(f"- {fact}")
+        
+        # Add location insights if we have them
+        if self.location_insights:
+            context.append("\nKnown locations:")
+            for location, insights in list(self.location_insights.items())[-3:]:
+                context.append(f"- {location}: {', '.join(insights[:2])}")
+        
+        # Add item insights
+        if self.item_insights:
+            context.append("\nKnown items:")
+            for item, insight in list(self.item_insights.items())[-3:]:
+                context.append(f"- {item}: {insight}")
+        
+        # Add puzzle solutions
+        if self.puzzle_solutions:
+            context.append("\nPuzzle solutions:")
+            for puzzle, solution in self.puzzle_solutions.items():
+                context.append(f"- {puzzle}: {solution}")
+        
+        return "\n".join(context) if context else ""
     
     def save_game(self):
         """Save the current game state"""
@@ -393,6 +593,11 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             print("\nWARNING: Got very little output from game. There may be an issue.")
             print("Trying to continue anyway...\n")
         
+        # Load previous learning
+        learning_loaded = self.load_learning()
+        if learning_loaded:
+            print(f"\n{self.CYAN}📚 Loaded previous learning: {len(self.learned_facts)} facts, {len(self.location_insights)} locations, {len(self.item_insights)} items{self.RESET}")
+        
         # Check if we should restore from save
         restore_from_save = False
         save_exists = os.path.exists(self.save_file) or os.path.exists(self.save_file + '.qzl')
@@ -445,6 +650,9 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             print(f"\n{self.YELLOW}{self.BOLD}📜 Game Response:{self.RESET}")
             print(f"{self.YELLOW}{game_output}{self.RESET}")
             
+            # Extract learning from this interaction
+            self.extract_learning(game_output, command, game_output)
+            
             # Check if we got empty output (possible timeout issue)
             if not game_output.strip():
                 print(f"\n{self.YELLOW}⚠️  Warning: Got empty response{self.RESET}")
@@ -456,6 +664,8 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             # Auto-save every 10 turns
             if self.auto_save and turn % 10 == 0:
                 save_success, new_state = self.save_game()
+                # Save learning data
+                self.save_learning()
                 # Update game_output with fresh state after save
                 if new_state:
                     game_output = new_state
@@ -468,6 +678,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         if self.auto_save and self.turn_count > 0:
             print(f"\n{self.CYAN}Saving final game state...{self.RESET}")
             self.save_game()  # Don't need return value here
+            self.save_learning()  # Save final learning data
         
         # Clean up
         if self.game_process and self.game_process.isalive():
