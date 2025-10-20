@@ -5,9 +5,8 @@ Zork AI Player - An AI agent that plays Zork using Claude
 
 import os
 import sys
-import subprocess
 import time
-import select
+import pexpect
 from anthropic import Anthropic
 
 class ZorkPlayer:
@@ -82,35 +81,44 @@ STRATEGY:
 Play strategically and try to make meaningful progress. Output ONLY the next command you want to execute, nothing else. No explanations, just the command."""
 
     def start_game(self):
-        """Start the Frotz process"""
-        self._debug("Attempting to start Frotz...")
+        """Start the Frotz process using pexpect"""
+        self._debug("Attempting to start Frotz with pexpect...")
         try:
-            self.game_process = subprocess.Popen(
-                ['dfrotz', self.game_file],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=0  # Unbuffered
+            # Spawn frotz with pexpect - it handles pseudo-terminals automatically
+            self.game_process = pexpect.spawn(
+                f'dfrotz {self.game_file}',
+                encoding='utf-8',
+                timeout=30
             )
-            self._debug("Frotz process started. Reading initial output...")
-            # Wait longer for initial output
-            time.sleep(1.5)
-            return self._read_game_output(timeout=5)
+            
+            self._debug("Waiting for initial game prompt...")
+            # Wait for the initial '>' prompt
+            self.game_process.expect('>', timeout=10)
+            
+            # Get all the text that appeared before the prompt
+            initial_output = self.game_process.before
+            
+            self._debug(f"Captured {len(initial_output)} characters of initial output")
+            return initial_output
+            
         except FileNotFoundError:
             print("Error: dfrotz not found. Make sure Frotz is installed.")
             print("On Mac: brew install frotz")
+            sys.exit(1)
+        except pexpect.TIMEOUT:
+            print("Error: Timeout waiting for game to start")
             sys.exit(1)
         except Exception as e:
             print(f"Error starting game: {e}")
             sys.exit(1)
     
-    def _read_game_output(self, timeout=3):
-        """Read output from the game using non-blocking I/O"""
+    def _read_game_output(self, timeout=5, wait_for_prompt=True):
+        """Read output from the game until we see the prompt"""
         output = []
         end_time = time.time() + timeout
+        last_char_time = time.time()
         
-        self._debug(f"Reading game output (timeout: {timeout}s)...")
+        self._debug(f"Reading game output (timeout: {timeout}s, wait_for_prompt: {wait_for_prompt})...")
         
         while time.time() < end_time:
             # Check if process is still alive
@@ -126,10 +134,25 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
                         char = self.game_process.stdout.read(1)
                         if char:
                             output.append(char)
+                            last_char_time = time.time()
                     except:
                         break
+                else:
+                    # No data available right now
+                    if output and wait_for_prompt:
+                        # Check if we have a prompt at the end
+                        output_str = ''.join(output)
+                        # Look for prompt pattern: newline followed by > and then nothing/whitespace
+                        if output_str.rstrip().endswith('\n>') or output_str.endswith('> '):
+                            self._debug("Found prompt pattern, stopping read")
+                            break
+                    
+                    # If no new data for 2 seconds, stop
+                    if output and (time.time() - last_char_time) > 2.0:
+                        self._debug("No new data for 2s, stopping")
+                        break
             else:
-                # Windows fallback - use readline with shorter timeout
+                # Windows fallback
                 try:
                     import threading
                     def read_line():
@@ -147,21 +170,33 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
                     break
         
         result = ''.join(output).strip()
-        self._debug(f"Read {len(result)} characters from game")
+        self._debug(f"Read {len(result)} characters")
         return result
     
     def send_command(self, command):
-        """Send a command to the game"""
-        if self.game_process and self.game_process.poll() is None:
+        """Send a command to the game and get response"""
+        if self.game_process and self.game_process.isalive():
             try:
-                self._debug(f"Sending command to game: {command}")
-                self.game_process.stdin.write(command + '\n')
-                self.game_process.stdin.flush()
-                time.sleep(0.5)  # Give game time to process
-                return self._read_game_output()
+                self._debug(f"Sending command: {command}")
+                
+                # Send the command
+                self.game_process.sendline(command)
+                
+                # Wait for the next prompt
+                self.game_process.expect('>', timeout=10)
+                
+                # Get everything that appeared before the prompt
+                response = self.game_process.before
+                
+                self._debug(f"Got response: {len(response)} characters")
+                return response.strip()
+                
+            except pexpect.TIMEOUT:
+                self._debug("Timeout waiting for response")
+                return "Error: Game did not respond in time"
             except Exception as e:
                 self._debug(f"Error sending command: {e}")
-                return "Error sending command"
+                return f"Error sending command: {e}"
         return "Game process not running"
     
     def get_ai_command(self, game_output):
@@ -196,89 +231,148 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         """Save the current game state"""
         self._debug(f"Attempting to save game to: {self.save_file}")
         
-        # Send SAVE command
-        self.game_process.stdin.write('SAVE\n')
-        self.game_process.stdin.flush()
-        time.sleep(0.5)
-        
-        # Read prompt for filename
-        prompt = self._read_game_output(timeout=2)
-        self._debug(f"Save prompt: {prompt}")
-        
-        # Send filename
-        self.game_process.stdin.write(self.save_file + '\n')
-        self.game_process.stdin.flush()
-        time.sleep(1)  # Give more time for save to complete
-        
-        # Read confirmation
-        result = self._read_game_output(timeout=2)
-        self._debug(f"Save result: {result}")
-        
-        # Check if save file exists (Frotz may add .qzl extension)
-        save_exists = os.path.exists(self.save_file)
-        save_with_qzl = os.path.exists(self.save_file + '.qzl')
-        
-        if save_exists or save_with_qzl:
-            actual_file = self.save_file if save_exists else self.save_file + '.qzl'
-            print(f"\n{self.GREEN}💾 Game saved to: {actual_file}{self.RESET}")
+        try:
+            # Send SAVE command
+            self.game_process.sendline('SAVE')
             
-            # Send LOOK to refresh game state after save
-            self.game_process.stdin.write('LOOK\n')
-            self.game_process.stdin.flush()
-            time.sleep(0.3)
-            self._read_game_output(timeout=1)  # Clear the output
+            # Wait for filename prompt - look for bracket or colon
+            idx = self.game_process.expect(['\\[', ':', pexpect.TIMEOUT], timeout=5)
+            prompt = self.game_process.before
+            self._debug(f"Save prompt (matched pattern {idx}): {prompt}")
             
-            return True
-        else:
-            print(f"\n{self.YELLOW}⚠️  Warning: Save file not created{self.RESET}")
-            self._debug(f"Checked for: {self.save_file} and {self.save_file}.qzl")
-            return False
+            # Read until the prompt character if we haven't consumed it
+            if idx in [0, 1]:  # Found [ or :
+                # Read to end of line to get full prompt
+                try:
+                    self.game_process.expect('\n', timeout=1)
+                except:
+                    pass
+            
+            # Send filename
+            self.game_process.sendline(self.save_file)
+            
+            # Check for "Overwrite existing file?" prompt
+            try:
+                # Wait a moment for potential overwrite prompt
+                overwrite_idx = self.game_process.expect(['Overwrite existing file', '>', pexpect.TIMEOUT], timeout=3)
+                if overwrite_idx == 0:  # Found overwrite prompt
+                    self._debug("Found overwrite prompt, responding with 'yes'")
+                    self.game_process.sendline('yes')
+                    # Wait for the result after overwrite confirmation
+                    self.game_process.expect('>', timeout=10)
+                elif overwrite_idx == 1:  # Found prompt directly (no overwrite needed)
+                    pass  # Already at prompt
+                else:  # Timeout - assume no overwrite needed
+                    pass
+            except pexpect.TIMEOUT:
+                # No overwrite prompt, continue
+                pass
+            
+            # Get the final result
+            result = self.game_process.before
+            self._debug(f"Save result: {result}")
+            
+            # Check if save file exists
+            save_exists = os.path.exists(self.save_file)
+            save_with_qzl = os.path.exists(self.save_file + '.qzl')
+            
+            if save_exists or save_with_qzl:
+                actual_file = self.save_file if save_exists else self.save_file + '.qzl'
+                print(f"\n{self.GREEN}💾 Game saved to: {actual_file}{self.RESET}")
+                save_success = True
+            else:
+                print(f"\n{self.YELLOW}⚠️  Warning: Save file not created{self.RESET}")
+                save_success = False
+            
+            # Send LOOK to refresh game state
+            self.game_process.sendline('LOOK')
+            self.game_process.expect('>', timeout=5)
+            current_state = self.game_process.before.strip()
+            
+            return save_success, current_state
+            
+        except pexpect.TIMEOUT as e:
+            print(f"\n{self.YELLOW}⚠️  Timeout during save{self.RESET}")
+            self._debug(f"Timeout detail: {e}")
+            # Try to recover by reading what we have
+            try:
+                remaining = self.game_process.read_nonblocking(size=1000, timeout=0.5)
+                self._debug(f"Remaining output: {remaining}")
+            except:
+                pass
+            return False, ""
+        except Exception as e:
+            self._debug(f"Save error: {e}")
+            return False, ""
     
     def restore_game(self):
         """Restore a saved game state"""
-        # Check for save file with or without .qzl extension
+        # Check for save file
         save_exists = os.path.exists(self.save_file)
         save_with_qzl = os.path.exists(self.save_file + '.qzl')
         
         if not save_exists and not save_with_qzl:
-            print(f"\n{self.YELLOW}⚠️  No save file found at: {self.save_file}{self.RESET}")
+            print(f"\n{self.YELLOW}⚠️  No save file found{self.RESET}")
             return False
         
         actual_file = self.save_file if save_exists else self.save_file + '.qzl'
-        self._debug(f"Attempting to restore game from: {actual_file}")
+        self._debug(f"Restoring from: {actual_file}")
         print(f"\n{self.CYAN}📂 Restoring from save file...{self.RESET}")
         
-        # Send RESTORE command
-        self.game_process.stdin.write('RESTORE\n')
-        self.game_process.stdin.flush()
-        time.sleep(0.5)
-        
-        # Read prompt for filename
-        prompt = self._read_game_output(timeout=2)
-        self._debug(f"Restore prompt: {prompt}")
-        
-        # Send filename (use actual file that exists)
-        self.game_process.stdin.write(actual_file + '\n')
-        self.game_process.stdin.flush()
-        time.sleep(1)  # Give it more time to restore
-        
-        # Read confirmation
-        result = self._read_game_output(timeout=3)
-        self._debug(f"Initial restore result: {result}")
-        
-        # Send LOOK command to get current state description
-        self.game_process.stdin.write('LOOK\n')
-        self.game_process.stdin.flush()
-        time.sleep(0.5)
-        
-        # Read the actual game state
-        game_state = self._read_game_output(timeout=3)
-        self._debug(f"Game state after LOOK: {game_state}")
-        
-        print(f"{self.GREEN}✓ Game restored from save file{self.RESET}")
-        
-        # Return the game state from LOOK command
-        return game_state if game_state else result
+        try:
+            # Send RESTORE command
+            self.game_process.sendline('RESTORE')
+            
+            # Wait for filename prompt - look for bracket or colon
+            idx = self.game_process.expect(['\\[', ':', pexpect.TIMEOUT], timeout=5)
+            self._debug(f"Restore prompt (matched pattern {idx})")
+            
+            # Read until end of prompt line
+            if idx in [0, 1]:
+                try:
+                    self.game_process.expect('\n', timeout=1)
+                except:
+                    pass
+            
+            # Send filename
+            self.game_process.sendline(actual_file)
+            
+            # Check for "Overwrite existing file?" prompt
+            try:
+                # Wait a moment for potential overwrite prompt
+                overwrite_idx = self.game_process.expect(['Overwrite existing file', '>', pexpect.TIMEOUT], timeout=3)
+                if overwrite_idx == 0:  # Found overwrite prompt
+                    self._debug("Found overwrite prompt during restore, responding with 'yes'")
+                    self.game_process.sendline('yes')
+                    # Wait for the result after overwrite confirmation
+                    self.game_process.expect('>', timeout=10)
+                elif overwrite_idx == 1:  # Found prompt directly (no overwrite needed)
+                    pass  # Already at prompt
+                else:  # Timeout - assume no overwrite needed
+                    pass
+            except pexpect.TIMEOUT:
+                # No overwrite prompt, continue
+                pass
+            
+            # Get the final result
+            result = self.game_process.before
+            self._debug(f"Restore result: {result}")
+            
+            # Send LOOK to get current state
+            self.game_process.sendline('LOOK')
+            self.game_process.expect('>', timeout=5)
+            game_state = self.game_process.before.strip()
+            
+            print(f"{self.GREEN}✓ Game restored{self.RESET}")
+            return game_state
+            
+        except pexpect.TIMEOUT as e:
+            print(f"\n{self.YELLOW}⚠️  Timeout during restore{self.RESET}")
+            self._debug(f"Timeout detail: {e}")
+            return False
+        except Exception as e:
+            self._debug(f"Restore error: {e}")
+            return False
     
     def play(self):
         """Main game loop"""
@@ -335,7 +429,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             if command.upper() in ['QUIT', 'Q']:
                 print("\nAI decided to quit the game.")
                 if self.auto_save:
-                    self.save_game()
+                    self.save_game()  # Don't need return value here
                 break
             
             # Send command to game
@@ -343,14 +437,21 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             print(f"\n{self.YELLOW}{self.BOLD}📜 Game Response:{self.RESET}")
             print(f"{self.YELLOW}{game_output}{self.RESET}")
             
-            # Check if game ended
-            if "quit" in game_output.lower() or not game_output.strip():
-                print("\nGame ended.")
-                break
+            # Check if we got empty output (possible timeout issue)
+            if not game_output.strip():
+                print(f"\n{self.YELLOW}⚠️  Warning: Got empty response{self.RESET}")
+                game_output = "The game did not respond."
+            
+            # Don't automatically end - let max_turns or AI's QUIT command handle it
+            # (Previously was checking for "quit" which gave false positives on words like "antiquity")
             
             # Auto-save every 10 turns
             if self.auto_save and turn % 10 == 0:
-                self.save_game()
+                save_success, new_state = self.save_game()
+                # Update game_output with fresh state after save
+                if new_state:
+                    game_output = new_state
+                    self._debug("Game state refreshed after autosave")
             
             # Small delay between turns
             time.sleep(0.5)
@@ -358,10 +459,10 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         # Final save before exit
         if self.auto_save and self.turn_count > 0:
             print(f"\n{self.CYAN}Saving final game state...{self.RESET}")
-            self.save_game()
+            self.save_game()  # Don't need return value here
         
         # Clean up
-        if self.game_process:
+        if self.game_process and self.game_process.isalive():
             self.game_process.terminate()
             self.game_process.wait()
         
@@ -416,6 +517,7 @@ def main():
     
     # Test if dfrotz exists
     if verbose:
+        import subprocess
         try:
             result = subprocess.run(['which', 'dfrotz'], capture_output=True, text=True)
             print(f"Found dfrotz at: {result.stdout.strip()}")

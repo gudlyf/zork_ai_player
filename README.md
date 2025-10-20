@@ -47,6 +47,10 @@ cd ~/gudlyf/src/zork_ai
 pip install -r requirements.txt
 ```
 
+This will install:
+- `anthropic` - Claude API client
+- `pexpect` - For reliable interaction with Frotz
+
 ### 4. Set Up API Key
 
 Export your Anthropic API key:

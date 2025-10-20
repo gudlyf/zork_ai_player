@@ -33,7 +33,7 @@ Save the following files to `~/gudlyf/src/zork_ai/`:
 ### 4. Install Dependencies
 
 ```bash
-pip3 install anthropic
+pip3 install anthropic pexpect
 ```
 
 ### 5. Set API Key

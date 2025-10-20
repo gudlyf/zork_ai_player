@@ -46,7 +46,7 @@ source venv/bin/activate
 # Install dependencies
 echo "Installing Python dependencies..."
 pip install --upgrade pip
-pip install anthropic
+pip install anthropic pexpect
 
 # Check for API key
 if [ -z "$ANTHROPIC_API_KEY" ]; then
