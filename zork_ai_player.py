@@ -77,6 +77,9 @@ STRATEGY:
 - Keep a light source (the lamp is essential in dark areas)
 - Save useful items - you can usually only carry a limited amount
 - If stuck, try examining objects more carefully or revisiting areas
+- NEVER quit the game - always try different approaches when stuck
+- If you can't progress in one direction, try exploring other areas
+- Use INVENTORY to see what you have and think of creative uses for items
 
 Play strategically and try to make meaningful progress. Output ONLY the next command you want to execute, nothing else. No explanations, just the command."""
 
@@ -425,12 +428,17 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             command = self.get_ai_command(game_output)
             print(f"\n{self.CYAN}{self.BOLD}🤖 AI Command:{self.RESET} {self.CYAN}{command}{self.RESET}")
             
-            # Check for quit
+            # Check for quit - but only allow it if we're at or past max_turns
             if command.upper() in ['QUIT', 'Q']:
-                print("\nAI decided to quit the game.")
-                if self.auto_save:
-                    self.save_game()  # Don't need return value here
-                break
+                if turn >= self.max_turns:
+                    print("\nAI decided to quit the game (reached max turns).")
+                    if self.auto_save:
+                        self.save_game()  # Don't need return value here
+                    break
+                else:
+                    print(f"\n{self.YELLOW}⚠️  AI tried to quit early (turn {turn}/{self.max_turns}), continuing...{self.RESET}")
+                    # Convert QUIT to a different command to keep the game going
+                    command = "LOOK"  # Safe command that won't break the game
             
             # Send command to game
             game_output = self.send_command(command)

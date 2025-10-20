@@ -189,7 +189,7 @@ The application uses Zork's built-in SAVE and RESTORE commands. Save files are c
 ```
 ~/gudlyf/src/zork_ai/
 ├── zork_ai_player.py    # Main application
-├── requirements.txt      # Python dependencies
+├── requirements.txt     # Python dependencies
 ├── README.md            # This file
 └── games/
     ├── zork1.z5         # Zork game file (you provide this)
