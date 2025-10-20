@@ -9,6 +9,7 @@ echo "Setting up Zork AI Player..."
 BASE_DIR=~/gudlyf/src/zork_ai
 echo "Creating directory: $BASE_DIR"
 mkdir -p "$BASE_DIR/games"
+mkdir -p "$BASE_DIR/games/saves"
 cd "$BASE_DIR"
 
 # Check if Frotz is installed

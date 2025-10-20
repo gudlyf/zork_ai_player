@@ -17,12 +17,16 @@ class ZorkPlayer:
     YELLOW = '\033[93m'
     BLUE = '\033[94m'
     MAGENTA = '\033[95m'
+    GREY = '\033[90m'
     BOLD = '\033[1m'
     RESET = '\033[0m'
     
-    def __init__(self, game_file, api_key=None, max_turns=50):
+    def __init__(self, game_file, api_key=None, max_turns=50, verbose=False, save_file=None, auto_save=True):
         self.game_file = game_file
         self.max_turns = max_turns
+        self.verbose = verbose
+        self.save_file = save_file
+        self.auto_save = auto_save
         self.api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
         
         if not self.api_key:
@@ -31,6 +35,20 @@ class ZorkPlayer:
         self.client = Anthropic(api_key=self.api_key)
         self.conversation_history = []
         self.game_process = None
+        self.turn_count = 0
+        
+        # Set up save file path
+        if not self.save_file:
+            game_name = os.path.splitext(os.path.basename(game_file))[0]
+            save_dir = os.path.join(os.path.dirname(game_file), 'saves')
+            os.makedirs(save_dir, exist_ok=True)
+            # Frotz uses .qzl extension for Quetzal save format
+            self.save_file = os.path.join(save_dir, f'{game_name}_autosave.qzl')
+        
+    def _debug(self, message):
+        """Print debug message if verbose mode is enabled"""
+        if self.verbose:
+            print(f"{self.GREY}{message}{self.RESET}", flush=True)
         
         # System prompt explaining Zork and how to play
         self.system_prompt = """You are an AI playing the classic text adventure game Zork I.
@@ -65,7 +83,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
 
     def start_game(self):
         """Start the Frotz process"""
-        print("Attempting to start Frotz...", flush=True)
+        self._debug("Attempting to start Frotz...")
         try:
             self.game_process = subprocess.Popen(
                 ['dfrotz', self.game_file],
@@ -75,7 +93,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
                 text=True,
                 bufsize=0  # Unbuffered
             )
-            print("Frotz process started. Reading initial output...", flush=True)
+            self._debug("Frotz process started. Reading initial output...")
             # Wait a moment for initial output
             time.sleep(1)
             return self._read_game_output()
@@ -92,12 +110,12 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         output = []
         end_time = time.time() + timeout
         
-        print(f"Reading game output (timeout: {timeout}s)...", flush=True)
+        self._debug(f"Reading game output (timeout: {timeout}s)...")
         
         while time.time() < end_time:
             # Check if process is still alive
             if self.game_process.poll() is not None:
-                print("Game process ended", flush=True)
+                self._debug("Game process ended")
                 break
             
             # Use select to check if data is available (Unix-like systems)
@@ -129,26 +147,26 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
                     break
         
         result = ''.join(output).strip()
-        print(f"Read {len(result)} characters from game", flush=True)
+        self._debug(f"Read {len(result)} characters from game")
         return result
     
     def send_command(self, command):
         """Send a command to the game"""
         if self.game_process and self.game_process.poll() is None:
             try:
-                print(f"Sending command to game: {command}", flush=True)
+                self._debug(f"Sending command to game: {command}")
                 self.game_process.stdin.write(command + '\n')
                 self.game_process.stdin.flush()
                 time.sleep(0.5)  # Give game time to process
                 return self._read_game_output()
             except Exception as e:
-                print(f"Error sending command: {e}", flush=True)
+                self._debug(f"Error sending command: {e}")
                 return "Error sending command"
         return "Game process not running"
     
     def get_ai_command(self, game_output):
         """Get next command from Claude"""
-        print("Requesting command from Claude...", flush=True)
+        self._debug("Requesting command from Claude...")
         
         # Add game output to conversation
         self.conversation_history.append({
@@ -174,11 +192,84 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         
         return command
     
+    def save_game(self):
+        """Save the current game state"""
+        self._debug(f"Attempting to save game to: {self.save_file}")
+        
+        # Send SAVE command
+        self.game_process.stdin.write('SAVE\n')
+        self.game_process.stdin.flush()
+        time.sleep(0.3)
+        
+        # Read prompt for filename
+        prompt = self._read_game_output(timeout=2)
+        self._debug(f"Save prompt: {prompt}")
+        
+        # Send filename
+        self.game_process.stdin.write(self.save_file + '\n')
+        self.game_process.stdin.flush()
+        time.sleep(0.5)
+        
+        # Read confirmation
+        result = self._read_game_output(timeout=2)
+        self._debug(f"Save result: {result}")
+        
+        # Check if save file exists (Frotz may add .qzl extension)
+        save_exists = os.path.exists(self.save_file)
+        save_with_qzl = os.path.exists(self.save_file + '.qzl')
+        
+        if save_exists or save_with_qzl:
+            actual_file = self.save_file if save_exists else self.save_file + '.qzl'
+            print(f"\n{self.GREEN}💾 Game saved to: {actual_file}{self.RESET}")
+            return True
+        else:
+            print(f"\n{self.YELLOW}⚠️  Warning: Save file not created{self.RESET}")
+            self._debug(f"Checked for: {self.save_file} and {self.save_file}.qzl")
+            return False
+    
+    def restore_game(self):
+        """Restore a saved game state"""
+        # Check for save file with or without .qzl extension
+        save_exists = os.path.exists(self.save_file)
+        save_with_qzl = os.path.exists(self.save_file + '.qzl')
+        
+        if not save_exists and not save_with_qzl:
+            print(f"\n{self.YELLOW}⚠️  No save file found at: {self.save_file}{self.RESET}")
+            return False
+        
+        actual_file = self.save_file if save_exists else self.save_file + '.qzl'
+        self._debug(f"Attempting to restore game from: {actual_file}")
+        print(f"\n{self.CYAN}📂 Restoring from save file...{self.RESET}")
+        
+        # Send RESTORE command
+        self.game_process.stdin.write('RESTORE\n')
+        self.game_process.stdin.flush()
+        time.sleep(0.3)
+        
+        # Read prompt for filename
+        prompt = self._read_game_output(timeout=2)
+        self._debug(f"Restore prompt: {prompt}")
+        
+        # Send filename (use actual file that exists)
+        self.game_process.stdin.write(actual_file + '\n')
+        self.game_process.stdin.flush()
+        time.sleep(0.5)
+        
+        # Read confirmation and new state
+        result = self._read_game_output(timeout=2)
+        self._debug(f"Restore result: {result}")
+        
+        print(f"{self.GREEN}✓ Game restored from save file{self.RESET}")
+        return result
+    
     def play(self):
         """Main game loop"""
         print("Starting Zork AI Player...")
         print(f"Using game file: {self.game_file}")
-        print(f"Max turns: {self.max_turns}\n")
+        print(f"Max turns: {self.max_turns}")
+        if self.auto_save:
+            print(f"Auto-save: {self.save_file}")
+        print()
         
         # Start the game
         initial_output = self.start_game()
@@ -187,16 +278,33 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             print("\nWARNING: Got very little output from game. There may be an issue.")
             print("Trying to continue anyway...\n")
         
-        print("=" * 70)
-        print(f"{self.MAGENTA}{self.BOLD}INITIAL GAME OUTPUT:{self.RESET}")
-        print("=" * 70)
-        print(f"{self.YELLOW}{initial_output}{self.RESET}")
-        print("=" * 70)
+        # Check if we should restore from save
+        restore_from_save = False
+        save_exists = os.path.exists(self.save_file) or os.path.exists(self.save_file + '.qzl')
+        if save_exists:
+            actual_file = self.save_file if os.path.exists(self.save_file) else self.save_file + '.qzl'
+            print(f"\n{self.CYAN}Found existing save file: {actual_file}{self.RESET}")
+            response = input(f"{self.CYAN}Resume from save? (y/n): {self.RESET}").strip().lower()
+            restore_from_save = response in ['y', 'yes']
         
-        game_output = initial_output
+        if restore_from_save:
+            game_output = self.restore_game()
+            print("=" * 70)
+            print(f"{self.MAGENTA}{self.BOLD}RESTORED GAME STATE:{self.RESET}")
+            print("=" * 70)
+            print(f"{self.YELLOW}{game_output}{self.RESET}")
+            print("=" * 70)
+        else:
+            print("=" * 70)
+            print(f"{self.MAGENTA}{self.BOLD}INITIAL GAME OUTPUT:{self.RESET}")
+            print("=" * 70)
+            print(f"{self.YELLOW}{initial_output}{self.RESET}")
+            print("=" * 70)
+            game_output = initial_output
         
         # Game loop
         for turn in range(1, self.max_turns + 1):
+            self.turn_count = turn
             print(f"\n{'=' * 70}")
             print(f"{self.GREEN}{self.BOLD}▶ TURN {turn}{self.RESET}")
             print(f"{'=' * 70}")
@@ -208,6 +316,8 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             # Check for quit
             if command.upper() in ['QUIT', 'Q']:
                 print("\nAI decided to quit the game.")
+                if self.auto_save:
+                    self.save_game()
                 break
             
             # Send command to game
@@ -220,8 +330,17 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
                 print("\nGame ended.")
                 break
             
+            # Auto-save every 10 turns
+            if self.auto_save and turn % 10 == 0:
+                self.save_game()
+            
             # Small delay between turns
             time.sleep(0.5)
+        
+        # Final save before exit
+        if self.auto_save and self.turn_count > 0:
+            print(f"\n{self.CYAN}Saving final game state...{self.RESET}")
+            self.save_game()
         
         # Clean up
         if self.game_process:
@@ -230,30 +349,68 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         
         print(f"\n{'=' * 70}")
         print(f"{self.GREEN}{self.BOLD}✓ GAME SESSION COMPLETE{self.RESET}")
+        print(f"Turns played: {self.turn_count}")
+        if self.auto_save:
+            save_exists = os.path.exists(self.save_file) or os.path.exists(self.save_file + '.qzl')
+            if save_exists:
+                actual_file = self.save_file if os.path.exists(self.save_file) else self.save_file + '.qzl'
+                print(f"Save file: {actual_file}")
         print(f"{'=' * 70}")
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python zork_ai_player.py <path_to_zork.z5> [max_turns]")
-        print("\nExample:")
+        print("Usage: python zork_ai_player.py <path_to_zork.z5> [max_turns] [options]")
+        print("\nOptions:")
+        print("  --verbose, -v         Show debug messages in grey")
+        print("  --no-autosave        Disable automatic saving")
+        print("  --save-file <path>   Use custom save file path")
+        print("\nExamples:")
         print("  python zork_ai_player.py games/zork1.z5 30")
+        print("  python zork_ai_player.py games/zork1.z5 30 --verbose")
+        print("  python zork_ai_player.py games/zork1.z5 50 --no-autosave")
+        print("  python zork_ai_player.py games/zork1.z5 --save-file my_save.sav")
         sys.exit(1)
     
     game_file = sys.argv[1]
-    max_turns = int(sys.argv[2]) if len(sys.argv) > 2 else 50
+    max_turns = 50
+    verbose = False
+    auto_save = True
+    save_file = None
+    
+    # Parse arguments
+    i = 2
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == '--verbose' or arg == '-v':
+            verbose = True
+        elif arg == '--no-autosave':
+            auto_save = False
+        elif arg == '--save-file' and i + 1 < len(sys.argv):
+            save_file = sys.argv[i + 1]
+            i += 1
+        elif arg.isdigit():
+            max_turns = int(arg)
+        i += 1
     
     if not os.path.exists(game_file):
         print(f"Error: Game file not found: {game_file}")
         sys.exit(1)
     
     # Test if dfrotz exists
-    try:
-        result = subprocess.run(['which', 'dfrotz'], capture_output=True, text=True)
-        print(f"Found dfrotz at: {result.stdout.strip()}")
-    except:
-        print("Warning: Could not verify dfrotz installation")
+    if verbose:
+        try:
+            result = subprocess.run(['which', 'dfrotz'], capture_output=True, text=True)
+            print(f"Found dfrotz at: {result.stdout.strip()}")
+        except:
+            print("Warning: Could not verify dfrotz installation")
     
-    player = ZorkPlayer(game_file, max_turns=max_turns)
+    player = ZorkPlayer(
+        game_file, 
+        max_turns=max_turns, 
+        verbose=verbose,
+        save_file=save_file,
+        auto_save=auto_save
+    )
     player.play()
 
 if __name__ == "__main__":

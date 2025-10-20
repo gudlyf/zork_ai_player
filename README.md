@@ -99,6 +99,30 @@ With custom number of turns:
 python zork_ai_player.py games/zork1.z5 30
 ```
 
+With verbose debug output:
+```bash
+python zork_ai_player.py games/zork1.z5 50 --verbose
+# or
+python zork_ai_player.py games/zork1.z5 50 -v
+```
+
+Disable auto-save:
+```bash
+python zork_ai_player.py games/zork1.z5 50 --no-autosave
+```
+
+Use custom save file:
+```bash
+python zork_ai_player.py games/zork1.z5 --save-file my_custom_save.sav
+```
+
+**Options:**
+- First argument: Path to game file (required)
+- Second argument: Number of turns (default: 50)
+- `--verbose` or `-v`: Show debug messages in grey (optional)
+- `--no-autosave`: Disable automatic saving (optional)
+- `--save-file <path>`: Specify custom save file location (optional)
+
 The AI will:
 1. Read the game's text output
 2. Analyze the situation
@@ -117,6 +141,45 @@ The AI will:
    - Game objectives
    - Strategy tips
 
+**Output Formatting:**
+- 🤖 **AI Commands** - Displayed in **cyan** 
+- 📜 **Game Responses** - Displayed in **yellow**
+- ▶ **Turn Headers** - Displayed in **green**
+- Debug messages (with `--verbose`) - Displayed in **grey**
+
+## Save & Resume Feature
+
+The application automatically saves your game progress:
+
+**Auto-Save Behavior:**
+- Saves every 10 turns automatically
+- Saves when you exit or quit
+- Saves to `games/saves/<gamename>_autosave.qzl` by default (Quetzal format)
+
+**Resuming from Save:**
+When you restart the application, if a save file exists, you'll be prompted:
+```
+Found existing save file: games/saves/zork1_autosave.qzl
+Resume from save? (y/n):
+```
+
+Type `y` to continue from where you left off, or `n` to start fresh.
+
+**Custom Save File:**
+```bash
+# Use your own save file location (Frotz will add .qzl if needed)
+python zork_ai_player.py games/zork1.z5 --save-file my_progress.qzl
+```
+
+**Disable Auto-Save:**
+```bash
+# Run without saving (useful for testing)
+python zork_ai_player.py games/zork1.z5 --no-autosave
+```
+
+**How It Works:**
+The application uses Zork's built-in SAVE and RESTORE commands. Save files are created in Quetzal format (.qzl) by Frotz and are compatible with any Z-machine interpreter (you could load them in a regular Frotz session).
+
 ## Project Structure
 
 ```
@@ -125,7 +188,9 @@ The AI will:
 ├── requirements.txt      # Python dependencies
 ├── README.md            # This file
 └── games/
-    └── zork1.z5         # Zork game file (you provide this)
+    ├── zork1.z5         # Zork game file (you provide this)
+    └── saves/           # Auto-generated save files
+        └── zork1_autosave.qzl  # Quetzal save format
 ```
 
 ## Customization
@@ -181,7 +246,8 @@ file games/zork1.z5  # Should show "Z-machine"
 
 **No game output:**
 - Increase timeouts in `_read_game_output()` method
-- Add debug print statements to see what's happening
+- Run with `--verbose` flag to see debug messages
+- Check if `dfrotz` is working: `dfrotz games/zork1.z5`
 
 ## About Zork
 
@@ -199,5 +265,9 @@ Zork is copyright Activision/Infocom. The game files are distributed freely by A
 
 - The AI may not always make optimal decisions
 - Some puzzles in Zork are quite difficult even for AI
-- You can interrupt the program with Ctrl+C
+- You can interrupt the program with Ctrl+C (will auto-save if enabled)
 - The conversation history grows with each turn, affecting API costs
+- Use `--verbose` flag to see detailed debug information
+- Colors are supported on most modern terminals (macOS Terminal, iTerm2, Linux terminals)
+- Save files are stored in `games/saves/` in Quetzal format (.qzl) and are compatible with any Frotz interpreter
+- When resuming, the AI continues from the saved game state with full context

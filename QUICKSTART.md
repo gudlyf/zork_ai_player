@@ -82,6 +82,11 @@ cd ~/gudlyf/src/zork_ai
 python3 zork_ai_player.py games/zork1.z5
 ```
 
+**For debug mode:**
+```bash
+python3 zork_ai_player.py games/zork1.z5 50 --verbose
+```
+
 Watch as Claude plays Zork!
 
 ## Example Output
@@ -91,9 +96,9 @@ Starting Zork AI Player...
 Using game file: games/zork1.z5
 Max turns: 50
 
-==================================================
+======================================================================
 INITIAL GAME OUTPUT:
-==================================================
+======================================================================
 ZORK I: The Great Underground Empire
 Copyright (c) 1981, 1982, 1983 Infocom, Inc.
 All rights reserved.
@@ -101,15 +106,45 @@ ZORK is a registered trademark of Infocom, Inc.
 
 West of House
 You are standing in an open field west of a white house...
-==================================================
+======================================================================
 
-==================================================
-TURN 1
-==================================================
-AI Command: EXAMINE HOUSE
+======================================================================
+▶ TURN 1
+======================================================================
 
-Game Response:
-The house is a beautiful colonial style house...
+🤖 AI Command: EXAMINE HOUSE
+
+📜 Game Response:
+The house is a beautiful colonial house...
+
+======================================================================
+▶ TURN 2
+======================================================================
+
+🤖 AI Command: GO NORTH
+
+📜 Game Response:
+North of House
+You are facing the north side of a white house...
+```
+
+**Note:** AI Commands appear in cyan, Game Responses in yellow. 
+Add `--verbose` to see grey debug messages about timeouts and I/O.
+
+## Save & Resume
+
+The game auto-saves every 10 turns in Quetzal format (.qzl). When you run it again:
+
+```
+Found existing save file: games/saves/zork1_autosave.qzl
+Resume from save? (y/n): y
+```
+
+Type `y` to continue, `n` to start over.
+
+**Run without saving:**
+```bash
+python3 zork_ai_player.py games/zork1.z5 --no-autosave
 ```
 
 ## Common Issues
@@ -130,12 +165,35 @@ export ANTHROPIC_API_KEY='your-key-here'
 ls -la ~/gudlyf/src/zork_ai/games/
 ```
 
+**Program seems frozen**
+```bash
+# Run with verbose mode to see what's happening
+python3 zork_ai_player.py games/zork1.z5 50 --verbose
+```
+
 ## Configuration
 
 ### Change Number of Turns
 
 ```bash
 python3 zork_ai_player.py games/zork1.z5 100  # 100 turns instead of 50
+```
+
+### Enable Debug Output
+
+```bash
+python3 zork_ai_player.py games/zork1.z5 50 --verbose  # Shows grey debug messages
+```
+
+### Long Sessions with Auto-Save
+
+```bash
+# Run for 100 turns - auto-saves every 10 turns
+python3 zork_ai_player.py games/zork1.z5 100
+
+# Resume the next day from where you left off
+python3 zork_ai_player.py games/zork1.z5 100
+# (When prompted, type 'y' to resume)
 ```
 
 ### Use Different Model
@@ -148,10 +206,13 @@ model="claude-sonnet-4-5-20250929",  # Change to another model
 ## Tips
 
 - **Watch the score**: The AI tries to maximize points
-- **Interrupt anytime**: Press `Ctrl+C` to stop
+- **Interrupt anytime**: Press `Ctrl+C` to stop (auto-saves before exit)
 - **Cost awareness**: Each turn costs API tokens
 - **Better results**: Give the AI more turns for better exploration
-- **Debug mode**: Add print statements to see AI's reasoning
+- **Debug mode**: Use `--verbose` to see grey debug messages about I/O and timeouts
+- **Clean output**: Run without `--verbose` for just AI commands and game responses
+- **Resume later**: The game auto-saves, so you can stop and continue anytime
+- **Long sessions**: Run for 100+ turns and let it save progress every 10 turns
 
 ## Next Steps
 
