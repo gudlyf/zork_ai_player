@@ -94,9 +94,9 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
                 bufsize=0  # Unbuffered
             )
             self._debug("Frotz process started. Reading initial output...")
-            # Wait a moment for initial output
-            time.sleep(1)
-            return self._read_game_output()
+            # Wait longer for initial output
+            time.sleep(1.5)
+            return self._read_game_output(timeout=5)
         except FileNotFoundError:
             print("Error: dfrotz not found. Make sure Frotz is installed.")
             print("On Mac: brew install frotz")
@@ -199,7 +199,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         # Send SAVE command
         self.game_process.stdin.write('SAVE\n')
         self.game_process.stdin.flush()
-        time.sleep(0.3)
+        time.sleep(0.5)
         
         # Read prompt for filename
         prompt = self._read_game_output(timeout=2)
@@ -208,7 +208,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         # Send filename
         self.game_process.stdin.write(self.save_file + '\n')
         self.game_process.stdin.flush()
-        time.sleep(0.5)
+        time.sleep(1)  # Give more time for save to complete
         
         # Read confirmation
         result = self._read_game_output(timeout=2)
@@ -221,6 +221,13 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         if save_exists or save_with_qzl:
             actual_file = self.save_file if save_exists else self.save_file + '.qzl'
             print(f"\n{self.GREEN}💾 Game saved to: {actual_file}{self.RESET}")
+            
+            # Send LOOK to refresh game state after save
+            self.game_process.stdin.write('LOOK\n')
+            self.game_process.stdin.flush()
+            time.sleep(0.3)
+            self._read_game_output(timeout=1)  # Clear the output
+            
             return True
         else:
             print(f"\n{self.YELLOW}⚠️  Warning: Save file not created{self.RESET}")
@@ -244,7 +251,7 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         # Send RESTORE command
         self.game_process.stdin.write('RESTORE\n')
         self.game_process.stdin.flush()
-        time.sleep(0.3)
+        time.sleep(0.5)
         
         # Read prompt for filename
         prompt = self._read_game_output(timeout=2)
@@ -253,14 +260,25 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         # Send filename (use actual file that exists)
         self.game_process.stdin.write(actual_file + '\n')
         self.game_process.stdin.flush()
+        time.sleep(1)  # Give it more time to restore
+        
+        # Read confirmation
+        result = self._read_game_output(timeout=3)
+        self._debug(f"Initial restore result: {result}")
+        
+        # Send LOOK command to get current state description
+        self.game_process.stdin.write('LOOK\n')
+        self.game_process.stdin.flush()
         time.sleep(0.5)
         
-        # Read confirmation and new state
-        result = self._read_game_output(timeout=2)
-        self._debug(f"Restore result: {result}")
+        # Read the actual game state
+        game_state = self._read_game_output(timeout=3)
+        self._debug(f"Game state after LOOK: {game_state}")
         
         print(f"{self.GREEN}✓ Game restored from save file{self.RESET}")
-        return result
+        
+        # Return the game state from LOOK command
+        return game_state if game_state else result
     
     def play(self):
         """Main game loop"""
