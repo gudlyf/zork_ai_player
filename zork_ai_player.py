@@ -87,15 +87,15 @@ STRATEGY:
 - Keep a light source (the lamp is essential in dark areas)
 - Save useful items - you can usually only carry a limited amount
 - If stuck, try examining objects more carefully or revisiting areas
-- NEVER quit the game - always try different approaches when stuck
+- NEVER quit the game - always try different approaches when stuck, unless you are dead in a ghost world
 - If you can't progress in one direction, try exploring other areas
 - Use INVENTORY to see what you have and think of creative uses for items
 
 SPECIAL MECHANICS:
-- If the game says your hand "passes through" an object, it means the object is not solid/real
-- This usually indicates the object is an illusion, ghost, or magical effect
-- Try different approaches: examine it more carefully, try magic words, or look for hidden switches
-- Some objects that "pass through" might be keys to puzzles or indicate you're in a special area
+- If the game says your hand "passes through" an object, it means your character is dead and you are in a ghost world
+- You can't interact with solid objects when dead - you must restart the game
+- Try RESTART command to start over, or QUIT and restart the program if RESTART doesn't work
+- This usually happens when you die in the game - you become a ghost and can't interact with the physical world
 
 Play strategically and try to make meaningful progress. Output ONLY the next command you want to execute, nothing else. No explanations, just the command."""
 
@@ -633,10 +633,16 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             command = self.get_ai_command(game_output)
             print(f"\n{self.CYAN}{self.BOLD}🤖 AI Command:{self.RESET} {self.CYAN}{command}{self.RESET}")
             
-            # Check for quit - but only allow it if we're at or past max_turns
+            # Check for quit - allow it if we're at max_turns or if AI is dead (ghost world)
             if command.upper() in ['QUIT', 'Q']:
-                if turn >= self.max_turns:
-                    print("\nAI decided to quit the game (reached max turns).")
+                # Check if AI is in ghost world (dead) by looking for "passes through" in recent output
+                is_dead = "passes through" in game_output.lower() or "ghost" in game_output.lower()
+                
+                if turn >= self.max_turns or is_dead:
+                    if is_dead:
+                        print("\nAI is dead (ghost world) - allowing quit to restart.")
+                    else:
+                        print("\nAI decided to quit the game (reached max turns).")
                     if self.auto_save:
                         self.save_game()  # Don't need return value here
                     break
@@ -649,6 +655,14 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             game_output = self.send_command(command)
             print(f"\n{self.YELLOW}{self.BOLD}📜 Game Response:{self.RESET}")
             print(f"{self.YELLOW}{game_output}{self.RESET}")
+            
+            # Handle RESTART confirmation
+            if command.upper() == 'RESTART' and "Are you sure you want to restart?" in game_output:
+                print(f"\n{self.CYAN}🤖 AI Command:{self.RESET} {self.CYAN}yes{self.RESET}")
+                confirmation_output = self.send_command("yes")
+                print(f"\n{self.YELLOW}{self.BOLD}📜 Game Response:{self.RESET}")
+                print(f"{self.YELLOW}{confirmation_output}{self.RESET}")
+                game_output = confirmation_output
             
             # Extract learning from this interaction
             self.extract_learning(game_output, command, game_output)
