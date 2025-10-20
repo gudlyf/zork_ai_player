@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  zork-ai:
+    image: python:3.11-slim
+    container_name: zork-ai-player
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - ./games:/app/games
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    command: >
+      sh -c "
+        apt-get update && 
+        apt-get install -y frotz && 
+        pip install anthropic &&
+        python zork_ai_player.py games/zork1.z5
+      "
+    stdin_open: true
+    tty: true
