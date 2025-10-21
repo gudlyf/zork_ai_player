@@ -71,8 +71,8 @@ source ~/.zshrc
 # Install Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Pull a model (e.g., Llama 3.2)
-ollama pull llama3.2
+# Pull the default model
+ollama pull gpt-oss:20b
 
 # Start Ollama server
 ollama serve
@@ -226,7 +226,8 @@ The AI remembers what it learned in previous sessions and uses this knowledge to
 - **Best for**: Privacy, cost savings, experimentation
 
 **Recommended Ollama Models:**
-- `llama3.2` - Good balance of speed and quality
+- `gpt-oss:20b` - Default model, good balance of speed and quality
+- `llama3.2` - Alternative option, good balance of speed and quality
 - `llama3.1` - Higher quality, slower
 - `mistral` - Fast and efficient
 - `codellama` - Good for logical reasoning

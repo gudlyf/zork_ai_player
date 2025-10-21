@@ -50,8 +50,8 @@ export ANTHROPIC_API_KEY='sk-ant-xxxxx'
 # Install Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Pull a model
-ollama pull llama3.2
+# Pull the default model
+ollama pull gpt-oss:20b
 
 # Start server
 ollama serve
@@ -206,7 +206,7 @@ python3 zork_ai_player.py games/zork1.z5 --ollama
 
 **Use specific Ollama model:**
 ```bash
-python3 zork_ai_player.py games/zork1.z5 --ollama --ollama-model llama3.2
+python3 zork_ai_player.py games/zork1.z5 --ollama --ollama-model gpt-oss:20b
 ```
 
 **Debug the learning system:**
