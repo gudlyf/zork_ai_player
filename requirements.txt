@@ -1,2 +1,3 @@
 anthropic>=0.40.0
 pexpect>=4.8.0
+requests>=2.25.0

@@ -6,7 +6,9 @@ Get up and running with Zork AI Player in 5 minutes.
 
 - macOS (instructions included for Linux)
 - Terminal access
-- Anthropic API key ([get one here](https://console.anthropic.com/))
+- AI Provider (choose one):
+  - Anthropic API key ([get one here](https://console.anthropic.com/))
+  - Ollama (for local models)
 
 ## Setup (5 minutes)
 
@@ -36,10 +38,23 @@ Save the following files to `~/gudlyf/src/zork_ai/`:
 pip3 install anthropic pexpect
 ```
 
-### 5. Set API Key
+### 5. Set Up AI Provider
 
+**Option A: Anthropic API**
 ```bash
 export ANTHROPIC_API_KEY='sk-ant-xxxxx'
+```
+
+**Option B: Ollama (Local)**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull a model
+ollama pull llama3.2
+
+# Start server
+ollama serve
 ```
 
 ### 6. Download Zork
@@ -140,12 +155,15 @@ The AI player includes an intelligent learning system that captures knowledge ac
 - **Item Information**: What items do, where they're found, how to use them
 - **Puzzle Solutions**: Hints about locked doors, switches, and other obstacles
 - **General Facts**: What works, what doesn't, and successful strategies
+- **Map Data**: Location connections, navigation paths, and spatial relationships
 
 **Learning Features:**
 - **Persistent Memory**: AI remembers discoveries from previous sessions
 - **Smart Context**: Only relevant knowledge is provided to keep token usage low
 - **Automatic Extraction**: Learning happens automatically during gameplay
 - **Efficient Storage**: Knowledge saved as lightweight JSON files
+- **Map Building**: Creates a mental map of locations and connections
+- **Navigation Memory**: Remembers where it can go from each location
 
 **Learning Files:**
 - `games/saves/zork1_learning.json` - Contains AI's accumulated knowledge
@@ -157,6 +175,8 @@ The AI player includes an intelligent learning system that captures knowledge ac
 - Avoids repeating failed strategies
 - Remembers successful approaches
 - Builds knowledge progressively across sessions
+- Creates a mental map for better navigation
+- Remembers location connections and exits
 
 ## Save & Resume
 
@@ -177,6 +197,21 @@ Type `y` to continue, `n` to start over.
 **Run without saving:**
 ```bash
 python3 zork_ai_player.py games/zork1.z5 --no-autosave
+```
+
+**Use Ollama instead:**
+```bash
+python3 zork_ai_player.py games/zork1.z5 --ollama
+```
+
+**Use specific Ollama model:**
+```bash
+python3 zork_ai_player.py games/zork1.z5 --ollama --ollama-model llama3.2
+```
+
+**Debug the learning system:**
+```bash
+python3 zork_ai_player.py games/zork1.z5 --verbose
 ```
 
 ## Common Issues

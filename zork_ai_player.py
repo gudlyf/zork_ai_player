@@ -8,6 +8,8 @@ import sys
 import time
 import pexpect
 from anthropic import Anthropic
+import requests
+import json
 
 class ZorkPlayer:
     # ANSI color codes
@@ -20,18 +22,32 @@ class ZorkPlayer:
     BOLD = '\033[1m'
     RESET = '\033[0m'
     
-    def __init__(self, game_file, api_key=None, max_turns=50, verbose=False, save_file=None, auto_save=True):
+    def __init__(self, game_file, api_key=None, max_turns=50, verbose=False, save_file=None, auto_save=True, use_ollama=False, ollama_model="gpt-oss:20b", ollama_url="http://localhost:11434"):
         self.game_file = game_file
         self.max_turns = max_turns
         self.verbose = verbose
         self.save_file = save_file
         self.auto_save = auto_save
-        self.api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
+        self.use_ollama = use_ollama
+        self.ollama_model = ollama_model
+        self.ollama_url = ollama_url
         
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-        
-        self.client = Anthropic(api_key=self.api_key)
+        if use_ollama:
+            self._debug(f"Using Ollama with model: {ollama_model} at {ollama_url}")
+            # Test Ollama connection
+            try:
+                response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+                if response.status_code == 200:
+                    self._debug("Ollama connection successful")
+                else:
+                    raise ValueError(f"Ollama server not responding at {ollama_url}")
+            except requests.exceptions.RequestException as e:
+                raise ValueError(f"Cannot connect to Ollama server at {ollama_url}: {e}")
+        else:
+            self.api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
+            if not self.api_key:
+                raise ValueError("ANTHROPIC_API_KEY not set")
+            self.client = Anthropic(api_key=self.api_key)
         self.conversation_history = []
         self.game_process = None
         self.turn_count = 0
@@ -42,6 +58,12 @@ class ZorkPlayer:
         self.item_insights = {}      # item -> insights
         self.puzzle_solutions = {}   # puzzle -> solution
         self.learning_file = None
+        
+        # Map system - lightweight navigation data
+        self.location_map = {}       # location -> connections
+        self.location_names = {}     # location -> short name
+        self.visited_locations = set()  # track visited places
+        self.current_location = None
         
         # Set up save file path
         if not self.save_file:
@@ -219,6 +241,13 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         return "Game process not running"
     
     def get_ai_command(self, game_output):
+        """Get next command from AI (Claude or Ollama)"""
+        if self.use_ollama:
+            return self._get_ollama_command(game_output)
+        else:
+            return self._get_claude_command(game_output)
+    
+    def _get_claude_command(self, game_output):
         """Get next command from Claude"""
         self._debug("Requesting command from Claude...")
         
@@ -254,6 +283,66 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         
         return command
     
+    def _get_ollama_command(self, game_output):
+        """Get next command from Ollama"""
+        self._debug(f"Requesting command from Ollama ({self.ollama_model})...")
+        
+        # Get learning context
+        learning_context = self.get_learning_context()
+        
+        # Create enhanced prompt with learning
+        enhanced_prompt = self.system_prompt
+        if learning_context:
+            enhanced_prompt += f"\n\nPREVIOUS KNOWLEDGE:\n{learning_context}\n\nUse this knowledge to make better decisions."
+        
+        # Build conversation context for Ollama
+        conversation_text = enhanced_prompt + "\n\n"
+        
+        # Add conversation history
+        for msg in self.conversation_history[-10:]:  # Keep last 10 messages to avoid token limits
+            if msg["role"] == "user":
+                conversation_text += f"User: {msg['content']}\n"
+            else:
+                conversation_text += f"Assistant: {msg['content']}\n"
+        
+        # Add current game output
+        conversation_text += f"User: Game output:\n{game_output}\n\nWhat's your next command?\n"
+        
+        # Prepare Ollama request
+        ollama_request = {
+            "model": self.ollama_model,
+            "prompt": conversation_text,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "max_tokens": 150
+            }
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json=ollama_request,
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            command = result.get("response", "").strip()
+            
+            # Add AI's command to conversation
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": command
+            })
+            
+            return command
+            
+        except requests.exceptions.RequestException as e:
+            self._debug(f"Ollama request failed: {e}")
+            return "LOOK"  # Fallback command
+    
     def extract_learning(self, game_output, command, response):
         """Extract key learning from game interaction"""
         # Look for important patterns in the game output
@@ -263,11 +352,28 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             "You close", "You read", "You examine", "You attack", "You die"
         ]
         
-        # Extract location information
+        # Extract location information and update map
         if "You are in" in game_output or "You are at" in game_output:
             location = self._extract_location(game_output)
             if location:
+                self._debug(f"📍 Location detected: '{location}'")
+                self.current_location = location
+                self.visited_locations.add(location)
                 self.location_insights[location] = self._summarize_location(game_output)
+                self._update_location_map(game_output, location)
+                self._debug(f"🗺️  Map updated. Total locations: {len(self.visited_locations)}")
+            else:
+                self._debug("⚠️  Location extraction failed")
+        else:
+            # Try to extract location even without "You are in/at" pattern
+            location = self._extract_location(game_output)
+            if location:
+                self._debug(f"📍 Location detected (alternative): '{location}'")
+                self.current_location = location
+                self.visited_locations.add(location)
+                self.location_insights[location] = self._summarize_location(game_output)
+                self._update_location_map(game_output, location)
+                self._debug(f"🗺️  Map updated. Total locations: {len(self.visited_locations)}")
         
         # Extract item information
         if any(pattern in game_output for pattern in ["You take", "You find", "You see"]):
@@ -290,10 +396,35 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
     def _extract_location(self, game_output):
         """Extract current location from game output"""
         lines = game_output.split('\n')
-        for line in lines:
-            if "You are in" in line or "You are at" in line:
-                # Extract location name (usually the first line after "You are in/at")
+        self._debug(f"🔍 Extracting location from {len(lines)} lines")
+        
+        # Look for the pattern: COMMAND\n Location Name Score: X Moves: Y
+        for i, line in enumerate(lines):
+            line = line.strip()
+            self._debug(f"🔍 Line {i}: '{line}'")
+            
+            # Check if this line contains a command (uppercase words)
+            if line.isupper() and len(line.split()) <= 3:
+                self._debug(f"🔍 Found command: '{line}'")
+                # Next line should be the location with score
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    self._debug(f"🔍 Next line: '{next_line}'")
+                    # Extract location name (everything before "Score:")
+                    if "Score:" in next_line:
+                        location = next_line.split("Score:")[0].strip()
+                        self._debug(f"🔍 Extracted location: '{location}'")
+                        return location
+                    # Fallback: if no score line, use the whole line
+                    elif next_line and "Moves:" not in next_line:
+                        self._debug(f"🔍 Using fallback location: '{next_line}'")
+                        return next_line
+            # Also check for "You are in/at" patterns as fallback
+            elif "You are in" in line or "You are at" in line:
+                self._debug(f"🔍 Found 'You are' pattern: '{line}'")
                 return line.strip()
+        
+        self._debug("🔍 No location found")
         return None
     
     def _summarize_location(self, game_output):
@@ -359,6 +490,86 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             return f"Successfully opened with {command}"
         return None
     
+    def _update_location_map(self, game_output, location):
+        """Update the location map with connections and short name"""
+        # Extract short name for location
+        short_name = self._extract_short_name(location)
+        self.location_names[location] = short_name
+        
+        # Extract connections (exits, passages, doors)
+        connections = self._extract_connections(game_output)
+        if connections:
+            self.location_map[location] = connections
+    
+    def _extract_short_name(self, location):
+        """Extract a short name for the location"""
+        # Location names are already short (like "Behind House", "Dome Room")
+        # Just return the full name if it's reasonable length
+        if len(location) <= 25:
+            return location
+        # If it's longer, take first few words
+        words = location.split()
+        if len(words) > 3:
+            return " ".join(words[:3])
+        return location[:25] + "..." if len(location) > 25 else location
+    
+    def _extract_connections(self, game_output):
+        """Extract available connections/exits from location description"""
+        connections = []
+        lines = game_output.split('\n')
+        
+        for line in lines:
+            line = line.strip().lower()
+            # Look for direction indicators
+            if any(direction in line for direction in ['north', 'south', 'east', 'west', 'up', 'down', 'northeast', 'northwest', 'southeast', 'southwest']):
+                # Extract the direction
+                for direction in ['north', 'south', 'east', 'west', 'up', 'down', 'northeast', 'northwest', 'southeast', 'southwest']:
+                    if direction in line:
+                        connections.append(direction)
+            # Look for door/passage indicators
+            elif any(keyword in line for keyword in ['door', 'passage', 'staircase', 'ladder', 'tunnel']):
+                # Try to extract direction from context
+                if 'north' in line or 'n' in line:
+                    connections.append('north')
+                elif 'south' in line or 's' in line:
+                    connections.append('south')
+                elif 'east' in line or 'e' in line:
+                    connections.append('east')
+                elif 'west' in line or 'w' in line:
+                    connections.append('west')
+                elif 'up' in line or 'u' in line:
+                    connections.append('up')
+                elif 'down' in line or 'd' in line:
+                    connections.append('down')
+        
+        return list(set(connections))  # Remove duplicates
+    
+    def get_map_context(self):
+        """Get lightweight map context for AI"""
+        if not self.location_map:
+            return ""
+        
+        context = ["MAP:"]
+        
+        # Add current location
+        if self.current_location:
+            short_name = self.location_names.get(self.current_location, "Unknown")
+            context.append(f"Current: {short_name}")
+        
+        # Add recent locations (last 5)
+        recent_locations = list(self.visited_locations)[-5:]
+        if recent_locations:
+            context.append("Recent locations:")
+            for loc in recent_locations:
+                short_name = self.location_names.get(loc, "Unknown")
+                connections = self.location_map.get(loc, [])
+                if connections:
+                    context.append(f"- {short_name}: {', '.join(connections[:3])}")
+                else:
+                    context.append(f"- {short_name}")
+        
+        return "\n".join(context)
+    
     def save_learning(self):
         """Save learning data to file"""
         import json
@@ -368,8 +579,17 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             'location_insights': self.location_insights,
             'item_insights': self.item_insights,
             'puzzle_solutions': self.puzzle_solutions,
-            'turn_count': self.turn_count
+            'turn_count': self.turn_count,
+            # Map data
+            'location_map': self.location_map,
+            'location_names': self.location_names,
+            'visited_locations': list(self.visited_locations),
+            'current_location': self.current_location
         }
+        
+        self._debug(f"💾 Saving learning: {len(self.learned_facts)} facts, {len(self.visited_locations)} locations")
+        self._debug(f"💾 Current location: {self.current_location}")
+        self._debug(f"💾 Visited locations: {list(self.visited_locations)}")
         
         try:
             with open(self.learning_file, 'w') as f:
@@ -394,6 +614,12 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
             self.item_insights = learning_data.get('item_insights', {})
             self.puzzle_solutions = learning_data.get('puzzle_solutions', {})
             
+            # Load map data
+            self.location_map = learning_data.get('location_map', {})
+            self.location_names = learning_data.get('location_names', {})
+            self.visited_locations = set(learning_data.get('visited_locations', []))
+            self.current_location = learning_data.get('current_location', None)
+            
             self._debug(f"Learning loaded from: {self.learning_file}")
             return True
         except Exception as e:
@@ -404,9 +630,14 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         """Get relevant learning context for AI without full conversation history"""
         context = []
         
+        # Add map context first (most important for navigation)
+        map_context = self.get_map_context()
+        if map_context:
+            context.append(map_context)
+        
         # Add recent facts (last 5)
         if self.learned_facts:
-            context.append("Recent discoveries:")
+            context.append("\nRecent discoveries:")
             for fact in self.learned_facts[-5:]:
                 context.append(f"- {fact}")
         
@@ -597,6 +828,8 @@ Play strategically and try to make meaningful progress. Output ONLY the next com
         learning_loaded = self.load_learning()
         if learning_loaded:
             print(f"\n{self.CYAN}📚 Loaded previous learning: {len(self.learned_facts)} facts, {len(self.location_insights)} locations, {len(self.item_insights)} items{self.RESET}")
+            if self.location_map:
+                print(f"{self.CYAN}🗺️  Map data: {len(self.location_map)} locations with connections{self.RESET}")
         
         # Check if we should restore from save
         restore_from_save = False
@@ -716,11 +949,17 @@ def main():
         print("  --verbose, -v         Show debug messages in grey")
         print("  --no-autosave        Disable automatic saving")
         print("  --save-file <path>   Use custom save file path")
+        print("  --ollama              Use Ollama instead of Anthropic API")
+        print("  --ollama-model <name> Ollama model to use (default: llama3.2)")
+        print("  --ollama-url <url>    Ollama server URL (default: http://localhost:11434)")
         print("\nExamples:")
         print("  python zork_ai_player.py games/zork1.z5 30")
         print("  python zork_ai_player.py games/zork1.z5 30 --verbose")
         print("  python zork_ai_player.py games/zork1.z5 50 --no-autosave")
         print("  python zork_ai_player.py games/zork1.z5 --save-file my_save.sav")
+        print("  python zork_ai_player.py games/zork1.z5 --ollama")
+        print("  python zork_ai_player.py games/zork1.z5 --ollama --ollama-model llama3.2")
+        print("  python zork_ai_player.py games/zork1.z5 --ollama --ollama-url http://localhost:11434")
         sys.exit(1)
     
     game_file = sys.argv[1]
@@ -728,6 +967,9 @@ def main():
     verbose = False
     auto_save = True
     save_file = None
+    use_ollama = False
+    ollama_model = "llama3.2"
+    ollama_url = "http://localhost:11434"
     
     # Parse arguments
     i = 2
@@ -739,6 +981,14 @@ def main():
             auto_save = False
         elif arg == '--save-file' and i + 1 < len(sys.argv):
             save_file = sys.argv[i + 1]
+            i += 1
+        elif arg == '--ollama':
+            use_ollama = True
+        elif arg == '--ollama-model' and i + 1 < len(sys.argv):
+            ollama_model = sys.argv[i + 1]
+            i += 1
+        elif arg == '--ollama-url' and i + 1 < len(sys.argv):
+            ollama_url = sys.argv[i + 1]
             i += 1
         elif arg.isdigit():
             max_turns = int(arg)
@@ -762,7 +1012,10 @@ def main():
         max_turns=max_turns, 
         verbose=verbose,
         save_file=save_file,
-        auto_save=auto_save
+        auto_save=auto_save,
+        use_ollama=use_ollama,
+        ollama_model=ollama_model,
+        ollama_url=ollama_url
     )
     player.play()
 

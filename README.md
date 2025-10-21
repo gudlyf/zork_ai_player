@@ -10,7 +10,9 @@ This application interfaces with Zork I (a classic text adventure game) and uses
 
 - **Python 3.8+**
 - **Frotz** (Z-machine interpreter)
-- **Anthropic API Key**
+- **AI Provider** (choose one):
+  - **Anthropic API Key** (for Claude)
+  - **Ollama** (for local models)
 - **Zork I game file** (.z5 format)
 
 ## Installation
@@ -51,9 +53,9 @@ This will install:
 - `anthropic` - Claude API client
 - `pexpect` - For reliable interaction with Frotz
 
-### 4. Set Up API Key
+### 4. Set Up AI Provider
 
-Export your Anthropic API key:
+**Option A: Anthropic API (Claude)**
 ```bash
 export ANTHROPIC_API_KEY='your-api-key-here'
 ```
@@ -62,6 +64,18 @@ Or add it to your `~/.bashrc` or `~/.zshrc`:
 ```bash
 echo 'export ANTHROPIC_API_KEY="your-api-key-here"' >> ~/.zshrc
 source ~/.zshrc
+```
+
+**Option B: Ollama (Local Models)**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull a model (e.g., Llama 3.2)
+ollama pull llama3.2
+
+# Start Ollama server
+ollama serve
 ```
 
 ### 5. Download Zork I
@@ -120,12 +134,53 @@ Use custom save file:
 python zork_ai_player.py games/zork1.z5 --save-file my_custom_save.sav
 ```
 
+Use Ollama instead of Anthropic:
+```bash
+python zork_ai_player.py games/zork1.z5 --ollama
+```
+
+Use specific Ollama model:
+```bash
+python zork_ai_player.py games/zork1.z5 --ollama --ollama-model gpt-oss:20b
+```
+
 **Options:**
 - First argument: Path to game file (required)
 - Second argument: Number of turns (default: 50)
 - `--verbose` or `-v`: Show debug messages in grey (optional)
 - `--no-autosave`: Disable automatic saving (optional)
 - `--save-file <path>`: Specify custom save file location (optional)
+- `--ollama`: Use Ollama instead of Anthropic API (optional)
+- `--ollama-model <name>`: Ollama model to use (default: llama3.2) (optional)
+- `--ollama-url <url>`: Ollama server URL (default: http://localhost:11434) (optional)
+
+## Debugging
+
+Use the `--verbose` flag to see detailed debug information about the learning system:
+
+```bash
+python zork_ai_player.py games/zork1.z5 --verbose
+```
+
+**Debug Output Includes:**
+- **Location Detection**: Shows when locations are found and extracted
+- **Map Updates**: Shows when the mental map is updated with new locations
+- **Learning Process**: Shows what data is being saved to the learning file
+- **AI Context**: Shows what knowledge is being provided to the AI
+
+**Example Debug Output:**
+```
+🔍 Extracting location from 5 lines
+🔍 Line 0: 'EXAMINE WINDOW'
+🔍 Found command: 'EXAMINE WINDOW'
+🔍 Next line: 'Behind House                                        Score: 0     Moves: 16'
+🔍 Extracted location: 'Behind House'
+📍 Location detected: 'Behind House'
+🗺️  Map updated. Total locations: 2
+💾 Saving learning: 3 facts, 2 locations
+💾 Current location: Behind House
+💾 Visited locations: ['Kitchen', 'Behind House']
+```
 
 The AI will:
 1. Read the game's text output
@@ -148,7 +203,7 @@ The AI remembers what it learned in previous sessions and uses this knowledge to
 ## How It Works
 
 1. **Frotz Interface**: Uses `dfrotz` (dumb frotz) to run the Z-machine game file via subprocess
-2. **Claude Integration**: Sends game text to Claude along with instructions about Zork
+2. **AI Integration**: Sends game text to AI (Claude or Ollama) along with instructions about Zork
 3. **Command Loop**: AI generates commands, sends them to Frotz, and reads responses
 4. **Learning System**: AI learns from its experiences and builds knowledge across sessions
 5. **System Prompt**: Includes detailed instructions about:
@@ -157,6 +212,24 @@ The AI remembers what it learned in previous sessions and uses this knowledge to
    - Game objectives
    - Strategy tips
    - Special game mechanics (like "passes through" objects)
+
+## AI Provider Options
+
+### **Anthropic API (Claude)**
+- **Pros**: High-quality responses, reliable, cloud-based
+- **Cons**: Requires API key, costs money, internet required
+- **Best for**: Production use, high-quality gameplay
+
+### **Ollama (Local Models)**
+- **Pros**: Free, private, no internet required, customizable
+- **Cons**: Requires local hardware, setup complexity
+- **Best for**: Privacy, cost savings, experimentation
+
+**Recommended Ollama Models:**
+- `llama3.2` - Good balance of speed and quality
+- `llama3.1` - Higher quality, slower
+- `mistral` - Fast and efficient
+- `codellama` - Good for logical reasoning
 
 **Output Formatting:**
 - 🤖 **AI Commands** - Displayed in **cyan** 
@@ -206,12 +279,15 @@ The AI player includes an intelligent learning system that captures knowledge ac
 - **Item Information**: What items do, where they're found, how to use them
 - **Puzzle Solutions**: Hints about locked doors, switches, and other obstacles
 - **General Facts**: What works, what doesn't, and successful strategies
+- **Map Data**: Location connections, navigation paths, and spatial relationships
 
 **Learning Features:**
 - **Persistent Memory**: AI remembers discoveries from previous sessions
 - **Smart Context**: Only relevant knowledge is provided to keep token usage low
 - **Automatic Extraction**: Learning happens automatically during gameplay
 - **Efficient Storage**: Knowledge saved as lightweight JSON files
+- **Map Building**: Creates a mental map of locations and connections
+- **Navigation Memory**: Remembers where it can go from each location
 
 **Learning Files:**
 - `games/saves/zork1_learning.json` - Contains AI's accumulated knowledge
@@ -233,7 +309,17 @@ The AI player includes an intelligent learning system that captures knowledge ac
   },
   "puzzle_solutions": {
     "door_puzzle": "Need to find key"
-  }
+  },
+  "location_map": {
+    "Living Room": ["north", "east", "west"],
+    "Kitchen": ["up", "west", "east"]
+  },
+  "location_names": {
+    "Living Room": "Living Room",
+    "Kitchen": "Kitchen"
+  },
+  "visited_locations": ["Living Room", "Kitchen"],
+  "current_location": "Kitchen"
 }
 ```
 
@@ -242,6 +328,8 @@ The AI player includes an intelligent learning system that captures knowledge ac
 - Avoids repeating failed strategies
 - Remembers successful approaches
 - Builds knowledge progressively across sessions
+- Creates a mental map for better navigation
+- Remembers location connections and exits
 
 ## Project Structure
 
